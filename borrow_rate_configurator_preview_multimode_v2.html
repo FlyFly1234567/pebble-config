@@ -1,0 +1,312 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>借贷利率参数配置 - 可下载HTML（带逐行预览）</title>
+<style>
+  :root { --bg:#0b1020; --card:#0f172a; --muted:#94a3b8; --text:#e2e8f0; --primary:#6366f1; --border:#22304a; --chip:#1f2a44; --surface:#0b1326; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:linear-gradient(120deg, #0b1020, #0b1428); color:var(--text); font:14px/1.5 system-ui, -apple-system, Segoe UI, Roboto, Noto Sans, Helvetica, Arial, "Apple Color Emoji","Segoe UI Emoji"; }
+  .container { max-width:1200px; margin: 24px auto 80px; padding: 0 16px; }
+  h1 { font-size: 22px; margin: 0 0 8px; }
+  p.sub { color:var(--muted); margin: 0 0 16px; }
+  .row { display:flex; align-items:center; gap:8px; flex-wrap: wrap; }
+  button { background: var(--chip); color: var(--text); border: 1px solid var(--border); padding: 8px 12px; border-radius: 12px; cursor: pointer; }
+  button.primary { background: var(--primary); border-color: #5562ee; }
+  button:disabled { opacity: .6; cursor: not-allowed; }
+  .grid { display: grid; gap: 16px; }
+  .grid.cards { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  @media (max-width: 920px) { .grid.cards { grid-template-columns: 1fr; } }
+  .card { background: var(--card); border: 1px solid var(--border); border-radius: 18px; padding: 16px; }
+  .card-head { display:flex; align-items:center; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
+  .title { font-weight:600; }
+  .fields { display:grid; gap: 16px; }
+  .g-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .g-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  @media (max-width: 920px) { .g-2, .g-3 { grid-template-columns: 1fr; } }
+  .field { display:flex; flex-direction: column; gap: 6px; }
+  .label { font-size: 11px; color: var(--muted); }
+  input[type="text"] { background: var(--surface); color: var(--text); border: 1px solid var(--border); border-radius: 12px; padding: 10px 12px; outline: none; }
+  input[type="text"]:focus { border-color:#6473ff; box-shadow: 0 0 0 3px rgb(99 102 241 / .25); }
+  .muted { color: var(--muted); font-size: 11px; margin-top: 6px; min-height: 16px; }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { text-align:left; padding: 8px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  th { color: var(--muted); font-size: 12px; }
+  .toolbar { display:flex; gap:8px; flex-wrap: wrap; align-items:center; justify-content: space-between; margin-bottom: 12px; }
+  .spacer { flex:1 1 auto; }
+  pre { background: #0a1530; border:1px solid var(--border); border-radius: 14px; padding: 12px; overflow:auto; white-space: pre-wrap; }
+  .preview-card { background: var(--card); border:1px solid var(--border); border-radius: 18px; padding: 0; margin-top: 16px; }
+  .preview-head { display:flex; align-items:center; justify-content: space-between; padding: 14px 16px; border-bottom:1px solid var(--border); }
+  .preview-head .title { font-size: 16px; }
+  .preview-body { padding: 12px 16px 16px; }
+  .pill { border-radius: 999px; padding:6px 10px; font-size: 12px; background: var(--surface); color: var(--muted); border:1px solid var(--border); }
+</style>
+</head>
+<body>
+  <div class="container">
+    <h1>借贷利率参数配置（可下载HTML）</h1>
+    <p class="sub">新增“逐行”预览：每个参数单独一行显示（key=value）。复制/下载会依据当前显示模式导出。</p>
+
+    <div class="toolbar">
+      <div class="row">
+        <button id="btnClear">⟳ 清空</button>
+        <button id="btnAdd" class="primary">＋ 新增一行</button>
+      </div>
+      <div class="spacer"></div>
+    </div>
+
+    <div id="mount"></div>
+
+    <div class="preview-card">
+      <div class="preview-head">
+        <div class="title" id="previewTitle">TXT 预览（CSV，导出包含 decimals）</div>
+        <div class="row">
+          <span class="pill">导出包含 decimals：<input type="checkbox" id="toggleDecimals" checked /></span>
+          <span class="pill">显示模式：
+            <select id="previewMode">
+              <option value="csv" selected>CSV</option>
+              <option value="kv">逐行</option>
+            </select>
+          </span>
+          <button id="btnCopy">📋 复制</button>
+          <button id="btnDownload">⬇️ 下载 .txt</button>
+        </div>
+      </div>
+      <div class="preview-body">
+        <pre id="preview"></pre>
+      </div>
+    </div>
+  </div>
+
+<script>
+(function(){
+  // --- state ---
+  let rows = [mkRow()];
+  let includeDecimals = true;
+  let mode = 'csv'; // 'csv' | 'kv'
+
+  const BASE_HEADER = [
+    "market","address",
+    "baseBorrowRatePerYear","baseBorrowRatePerSec",
+    "borrowRateOnMidKinkPerYear","borrowRateOnMidKinkPerSec",
+    "midKink",
+    "borrowRateOnHighKinkPerYear","borrowRateOnHighKinkPerSec",
+    "highKink",
+    "maxBorrowRatePerYear","maxBorrowRatePerYearPerSec",
+    "minBorrowAmount","maxDepositAmount",
+    "repayFeeRate","liquidationRevenueFactor",
+    "decimals","conf","expo"
+  ];
+
+  function mkRow(o={}){
+    return Object.assign({
+      id: Math.random().toString(36).slice(2,9),
+      market: "", address: "",
+      baseBorrowRatePerYear: "", borrowRateOnMidKinkPerYear: "", borrowRateOnHighKinkPerYear: "",
+      midKink: "", highKink: "", maxBorrowRatePerYear: "",
+      minBorrowAmount: "", maxDepositAmount: "",
+      repayFeeRate: "", liquidationRevenueFactor: "",
+      decimals: "", conf: "", expo: ""
+    }, o);
+  }
+
+  // helpers
+  const parseNum = (v) => (v === "" || v == null ? null : Number(v));
+  const perSec = (perYear) => (perYear == null || !Number.isFinite(perYear) ? null : perYear / 365 / 24 / 3600);
+
+  function toBaseUnits(amountStr, decimalsStr) {
+    const amount = (amountStr ?? "").trim();
+    const decimals = (decimalsStr ?? "").trim();
+    if (!amount || !decimals) return { value: "", pretty: "" };
+    const d = Number(decimals);
+    if (!Number.isInteger(d) || d < 0) return { value: "", pretty: "" };
+    let dots = 0;
+    for (const ch of amount) {
+      if (ch === ".") dots++;
+      else if (ch < "0" || ch > "9") return { value: "", pretty: "" };
+    }
+    if (dots > 1) return { value: "", pretty: "" };
+    const parts = amount.split(".");
+    const ip = parts[0] || "0";
+    const fp0 = parts[1] || "";
+    const fp = (fp0 + "0".repeat(d)).slice(0, d);
+    let full = ip + fp;
+    let i = 0;
+    while (i < full.length - 1 && full[i] === "0") i++;
+    full = full.slice(i);
+    try {
+      const bi = BigInt(full || "0");
+      return { value: bi.toString(), pretty: ip + (fp0 ? ("." + fp0) : "") + "*10^" + d };
+    } catch {
+      return { value: "", pretty: "" };
+    }
+  }
+
+  function toFixedNoExp(num, digits=18){
+    if (!Number.isFinite(num)) return "";
+    const s = num.toFixed(digits);
+    return s.replace(/\.0+$/, ".0").replace(/(\.\d*?[1-9])0+$/, "$1");
+  }
+
+  function header(){
+    return includeDecimals ? BASE_HEADER.slice() : BASE_HEADER.filter(x => x !== "decimals");
+  }
+
+  function csvLine(r){
+    const baseY = parseNum(r.baseBorrowRatePerYear);
+    const midY  = parseNum(r.borrowRateOnMidKinkPerYear);
+    const highY = parseNum(r.borrowRateOnHighKinkPerYear);
+    const maxY  = parseNum(r.maxBorrowRatePerYear);
+    const basePerSec = perSec(baseY);
+    const midPerSec  = perSec(midY);
+    const highPerSec = perSec(highY);
+    const maxPerSec  = perSec(maxY);
+    const minBorrow = toBaseUnits(r.minBorrowAmount, r.decimals).value;
+    const maxDeposit = toBaseUnits(r.maxDepositAmount, r.decimals).value;
+
+    const arr = [
+      r.market, r.address,
+      r.baseBorrowRatePerYear, basePerSec==null? "" : toFixedNoExp(basePerSec),
+      r.borrowRateOnMidKinkPerYear, midPerSec==null? "" : toFixedNoExp(midPerSec),
+      r.midKink,
+      r.borrowRateOnHighKinkPerYear, highPerSec==null? "" : toFixedNoExp(highPerSec),
+      r.highKink,
+      r.maxBorrowRatePerYear, maxPerSec==null? "" : toFixedNoExp(maxPerSec),
+      minBorrow, maxDeposit,
+      r.repayFeeRate, r.liquidationRevenueFactor,
+      r.decimals, r.conf, r.expo
+    ];
+
+    if (!includeDecimals) {
+      const idx = BASE_HEADER.indexOf("decimals");
+      arr.splice(idx, 1);
+    }
+    return arr.join(",");
+  }
+
+  function csvString(rows){ return header().join(",") + "\n" + rows.map(csvLine).join("\n"); }
+
+  function kvString(rows){
+    const h = header();
+    const chunks = [];
+    for (const r of rows){
+      const line = csvLine(r).split(",");
+      const pairs = [];
+      for (let i=0;i<h.length;i++){
+        pairs.push(h[i] + "=" + (line[i] ?? ""));
+      }
+      chunks.push(pairs.join("\n"));
+    }
+    return chunks.join("\n\n");
+  }
+
+  function currentString(){
+    return mode === 'csv' ? csvString(rows) : kvString(rows);
+  }
+
+  function el(tag, props={}, ...children){
+    const node = document.createElement(tag);
+    for (const k in props){
+      if (k === "className") node.setAttribute("class", props[k]);
+      else if (k.startsWith("on")) node[k] = props[k];
+      else node[k] = props[k];
+    }
+    for(const c of children){
+      if (c==null) continue;
+      if (typeof c === "string") node.appendChild(document.createTextNode(c));
+      else node.appendChild(c);
+    }
+    return node;
+  }
+
+  function field(label, inputEl, hintEl){
+    const wrap = el("div", { className:"field" },
+      el("div", { className:"label" }, label),
+      inputEl
+    );
+    if (hintEl) wrap.appendChild(hintEl);
+    return wrap;
+  }
+
+  function numInput(value, onCommit, placeholder="", inputMode="decimal"){
+    const input = el("input", { type:"text", value: value ?? "", placeholder, inputMode, autoComplete:"off", spellcheck:false });
+    input.addEventListener("blur", () => onCommit(input.value));
+    return input;
+  }
+
+  function render(){
+    const mount = document.getElementById("mount");
+    mount.innerHTML = "";
+    const grid = el("div", { className:"grid cards" });
+    for (const r of rows){
+      const baseSec = perSec(parseNum(r.baseBorrowRatePerYear));
+      const midSec  = perSec(parseNum(r.borrowRateOnMidKinkPerYear));
+      const highSec = perSec(parseNum(r.borrowRateOnHighKinkPerYear));
+      const maxSec  = perSec(parseNum(r.maxBorrowRatePerYear));
+      const minB = toBaseUnits(r.minBorrowAmount, r.decimals);
+      const maxD = toBaseUnits(r.maxDepositAmount, r.decimals);
+      const card = el("div", { className:"card" },
+        el("div", { className:"card-head" },
+          el("div", { className:"title" }, r.market || "未命名市场"),
+          el("div", { className:"row" },
+            el("button", { onclick: ()=>{ const i=rows.findIndex(x=>x.id===r.id); if(i>-1){ rows.splice(i+1,0,mkRow({...r,id:Math.random().toString(36).slice(2,9), market: (r.market||'')+'_copy'})); render(); }} }, "⧉ 复制"),
+            el("button", { onclick: ()=>{ if(rows.length>1){ rows = rows.filter(x=>x.id!==r.id); render(); } } }, "🗑️ 删除")
+          )
+        ),
+        el("div", { className:"fields g-2" },
+          field("market", el("input", { type:"text", value:r.market, oninput:(e)=>{ r.market = e.target.value; }})),
+          field("address", el("input", { type:"text", value:r.address, oninput:(e)=>{ r.address = e.target.value; }, placeholder:"0x... 或 0x2::type::TOKEN" }))
+        ),
+        el("div", { className:"fields g-3" },
+          field("baseBorrowRatePerYear", numInput(r.baseBorrowRatePerYear, v=>{ r.baseBorrowRatePerYear=v; renderPreview(); }), el("div", { className:"muted" }, "perSec ≈ ", baseSec==null? "—" : toFixedNoExp(baseSec))),
+          field("borrowRateOnMidKinkPerYear", numInput(r.borrowRateOnMidKinkPerYear, v=>{ r.borrowRateOnMidKinkPerYear=v; renderPreview(); }), el("div", { className:"muted" }, "perSec ≈ ", midSec==null? "—" : toFixedNoExp(midSec))),
+          field("borrowRateOnHighKinkPerYear", numInput(r.borrowRateOnHighKinkPerYear, v=>{ r.borrowRateOnHighKinkPerYear=v; renderPreview(); }), el("div", { className:"muted" }, "perSec ≈ ", highSec==null? "—" : toFixedNoExp(highSec))),
+          field("midKink", numInput(r.midKink, v=>{ r.midKink=v; })),
+          field("highKink", numInput(r.highKink, v=>{ r.highKink=v; })),
+          field("maxBorrowRatePerYear", numInput(r.maxBorrowRatePerYear, v=>{ r.maxBorrowRatePerYear=v; renderPreview(); }), el("div", { className:"muted" }, "perSec ≈ ", maxSec==null? "—" : toFixedNoExp(maxSec)))
+        ),
+        el("div", { className:"fields g-3" },
+          field("minBorrowAmount", numInput(r.minBorrowAmount, v=>{ r.minBorrowAmount=v; renderPreview(); }), el("div", { className:"muted" }, "→ base: ", (minB.value||""), minB.pretty? " ("+minB.pretty+")" : "")),
+          field("maxDepositAmount", numInput(r.maxDepositAmount, v=>{ r.maxDepositAmount=v; renderPreview(); }), el("div", { className:"muted" }, "→ base: ", (maxD.value||""), maxD.pretty? " ("+maxD.pretty+")" : "")),
+          field("decimals", numInput(r.decimals, v=>{ r.decimals=v; renderPreview(); }, "", "numeric")),
+          field("repayFeeRate", numInput(r.repayFeeRate, v=>{ r.repayFeeRate=v; })),
+          field("liquidationRevenueFactor", numInput(r.liquidationRevenueFactor, v=>{ r.liquidationRevenueFactor=v; })),
+          field("conf / expo", el("div", { className:"fields g-2" },
+            field("", numInput(r.conf, v=>{ r.conf=v; })),
+            field("", numInput(r.expo, v=>{ r.expo=v; }))
+          ))
+        )
+      );
+      grid.appendChild(card);
+    }
+    mount.appendChild(grid);
+    renderPreview();
+  }
+
+  function renderPreview(){
+    const title = (mode==='csv' ? 'CSV' : '逐行') + '，' + (includeDecimals ? '导出包含 decimals' : '导出不包含 decimals');
+    document.getElementById("previewTitle").textContent = 'TXT 预览（' + title + '）';
+    document.getElementById("preview").textContent = currentString();
+  }
+
+  document.getElementById("btnClear").addEventListener("click", ()=>{ rows=[mkRow()]; render(); });
+  document.getElementById("btnAdd").addEventListener("click", ()=>{ rows.push(mkRow()); render(); });
+  document.getElementById("btnCopy").addEventListener("click", async ()=>{
+    try { await navigator.clipboard.writeText(currentString()); alert("已复制到剪贴板"); }
+    catch(e){ alert("复制失败: " + e.message); }
+  });
+  document.getElementById("btnDownload").addEventListener("click", ()=>{
+    const blob = new Blob([currentString()], { type: "text/plain;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = (mode==='csv' ? 'borrow_rates.csv' : 'borrow_rates.txt'); a.click();
+    URL.revokeObjectURL(url);
+  });
+  document.getElementById("toggleDecimals").addEventListener("change", (e)=>{ includeDecimals = !!e.target.checked; renderPreview(); });
+  document.getElementById("previewMode").addEventListener("change", (e)=>{ mode = e.target.value; renderPreview(); });
+
+  render();
+})();</script>
+</body>
+</html>
