@@ -1,0 +1,254 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Emode 配置器（单文件版）</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    body { background: #f7fafc; }
+    @media (prefers-color-scheme: dark) { body { background: #0b1220; } }
+  </style>
+</head>
+<body class="text-slate-900 dark:text-slate-100">
+  <div id="root"></div>
+
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+  <script type="text/babel">
+    const { useMemo, useState } = React;
+
+    // --- Minimal UI ---
+    const cx = (...a) => a.filter(Boolean).join(" ");
+    const Button = ({ className, ...props }) => (
+      <button className={cx("px-3 py-1.5 rounded-2xl border bg-white text-slate-900 dark:bg-slate-900 dark:text-slate-100","shadow-sm hover:shadow transition text-sm disabled:opacity-60", className)} {...props} />
+    );
+    const Input = ({ className, ...props }) => (
+      <input className={cx("w-full px-3 py-2 rounded-xl border outline-none","bg-white text-slate-900 dark:bg-slate-900 dark:text-slate-100","focus:ring-2 ring-slate-300 dark:ring-slate-700","text-sm", className)} {...props} />
+    );
+    const Card = ({ className, ...props }) => (<div className={cx("rounded-2xl border shadow-sm bg-white/70 dark:bg-slate-900/60", className)} {...props} />);
+    const CardContent = ({ className, ...props }) => (<div className={cx("p-4", className)} {...props} />);
+
+    // ===== Model =====
+    const mkRow = (o = {}) => ({ id: Math.random().toString(36).slice(2, 9), decimals: 6, market: "", emodeGroup: 0, address: "", tokenMaxBorrow: "0", tokenBorrowOut: "0", tokenDepositOut: "0", flashLoanFeeRate: 0.003, collateralFactor: 0.5, liquidationThreshold: 0.6, liquidationIncentive: 1.08, borrowWeight: 1, ...o });
+
+    const clamp01 = (x) => Math.min(1, Math.max(0, Number.isFinite(x) ? x : 0));
+    const parseNum = (v) => { const n = Number(v); return Number.isFinite(n) ? n : 0; };
+    const isAddr = (a) => { if (!a || /\s/.test(a)) return false; if (/^0x[a-fA-F0-9]{40}$/.test(a)) return true; if (/^0x[0-9a-fA-F]+(::[A-Za-z0-9_]+){1,}$/.test(a)) return true; if (a.length >= 32) return true; return false; };
+
+    function decimalToBaseUnits(amountStr, decimals) {
+      if (!amountStr || amountStr.trim() === "") return { value: "0", pretty: `0*10^${decimals}` };
+      const s = amountStr.trim();
+      let dots = 0; for (const ch of s) { if (ch === ".") dots++; else if (ch < "0" || ch > "9") return { value: null, error: "仅支持数字与小数点" }; }
+      if (dots > 1) return { value: null, error: "只能有一个小数点" };
+      const [ip = "0", fp0 = ""] = s.split(".");
+      if (fp0.length > decimals) return { value: null, error: `小数位不能超过 ${decimals}` };
+      const fp = (fp0 + "0".repeat(decimals)).slice(0, decimals);
+      let full = ip + fp; let i = 0; while (i < full.length - 1 && full[i] === "0") i++; full = full.slice(i);
+      try { const bi = BigInt(full || "0"); return { value: bi.toString(), pretty: `${ip}${fp0?'.'+fp0:''}*10^${decimals}` }; } catch { return { value: null, error: "数值过大或无效" }; }
+    }
+
+    // CSV/TXT
+    const CSV_HEADER = ["market","emodeGroup","address","maxBorrowAmount","borrowOutFlowLimit","depositOutFlowLimit","flashLoanFeeRate","collateralFactor","liquidationThreshold","liquidationIncentive","borrowWeight"];
+    const csvHeader = () => CSV_HEADER.join(",");
+    function toExportRow(r) {
+      const a = decimalToBaseUnits(r.tokenMaxBorrow, r.decimals).value ?? "0";
+      const b = decimalToBaseUnits(r.tokenBorrowOut, r.decimals).value ?? "0";
+      const c = decimalToBaseUnits(r.tokenDepositOut, r.decimals).value ?? "0";
+      return { market: r.market, emodeGroup: r.emodeGroup, address: r.address, maxBorrowAmount: a, borrowOutFlowLimit: b, depositOutFlowLimit: c, flashLoanFeeRate: r.flashLoanFeeRate, collateralFactor: r.collateralFactor, liquidationThreshold: r.liquidationThreshold, liquidationIncentive: r.liquidationIncentive, borrowWeight: r.borrowWeight };
+    }
+    const csvLine = (x) => [x.market, String(x.emodeGroup), x.address, x.maxBorrowAmount, x.borrowOutFlowLimit, x.depositOutFlowLimit, String(x.flashLoanFeeRate), String(x.collateralFactor), String(x.liquidationThreshold), String(x.liquidationIncentive), String(x.borrowWeight)].join(",");
+    const csvString = (rows) => { const body = rows.map(r => csvLine(toExportRow(r))).join("\n"); return csvHeader()+"\n"+body; };
+
+    function App() {
+      const [rows, setRows] = useState([mkRow()]);
+      const [copied, setCopied] = useState(false);
+
+      const errors = useMemo(() => {
+        const m = {};
+        for (const r of rows) {
+          const e = {};
+          if (!Number.isInteger(r.decimals) || r.decimals < 0 || r.decimals > 36) e.decimals = "0–36 整数";
+          if (!r.market) e.market = "必填";
+          if (!Number.isInteger(r.emodeGroup) || r.emodeGroup < 0) e.emodeGroup = "非负整数";
+          if (!isAddr(r.address)) e.address = "地址不合法";
+          const a = decimalToBaseUnits(r.tokenMaxBorrow, r.decimals);
+          const b = decimalToBaseUnits(r.tokenBorrowOut, r.decimals);
+          const c = decimalToBaseUnits(r.tokenDepositOut, r.decimals);
+          if (a.error) e.tokenMaxBorrow = a.error;
+          if (b.error) e.tokenBorrowOut = b.error;
+          if (c.error) e.tokenDepositOut = c.error;
+          if (r.flashLoanFeeRate < 0 || r.flashLoanFeeRate > 1) e.flashLoanFeeRate = "0-1";
+          if (r.collateralFactor < 0 || r.collateralFactor > 1) e.collateralFactor = "0-1";
+          if (r.liquidationThreshold < 0 || r.liquidationThreshold > 1) e.liquidationThreshold = "0-1";
+          if (r.collateralFactor > r.liquidationThreshold) e.collateralFactor = "不得大于清算阈值";
+          if (r.liquidationIncentive < 1) e.liquidationIncentive = ">=1";
+          m[r.id] = e;
+        }
+        return m;
+      }, [rows]);
+
+      const contentTxt = useMemo(() => csvString(rows), [rows]);
+      const copyTxt = async () => { try { await navigator.clipboard.writeText(contentTxt); setCopied(true); setTimeout(()=>setCopied(false), 1200);} catch {} };
+      const downloadTxt = () => { const blob = new Blob([contentTxt], { type: 'text/plain;charset=utf-8;' }); const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = 'lending_params.txt'; a.click(); URL.revokeObjectURL(url); };
+
+      const add = () => setRows(r => [...r, mkRow()]);
+      const clone = (id) => setRows(r => { const i = r.findIndex(x=>x.id===id); if(i<0) return r; return [...r.slice(0,i+1), { ...r[i], id: Math.random().toString(36).slice(2,9), market: r[i].market+"_copy" }, ...r.slice(i+1)];});
+      const del = (id) => setRows(r => r.length>1 ? r.filter(x=>x.id!==id) : r);
+
+      return (
+        <div className="p-6 md:p-10 max-w-[1200px] mx-auto">
+          <div className="flex items-center justify-between gap-3 flex-wrap">
+            <h1 className="text-2xl font-semibold">参数配置（含 Decimals → base units 计算）</h1>
+            <div className="flex gap-2 flex-wrap">
+              <Button onClick={()=>setRows([mkRow()])}>⟳ 清空</Button>
+              <Button onClick={add}>＋ 新增一行</Button>
+              <Button onClick={copyTxt}>{copied?"✅ 已复制 TXT":"📋 复制 TXT"}</Button>
+              <Button onClick={downloadTxt}>⬇️ 导出 TXT</Button>
+            </div>
+          </div>
+
+          <div className="mt-4 space-y-4">
+            {rows.map(r => {
+              const a = decimalToBaseUnits(r.tokenMaxBorrow, r.decimals);
+              const b = decimalToBaseUnits(r.tokenBorrowOut, r.decimals);
+              const c = decimalToBaseUnits(r.tokenDepositOut, r.decimals);
+              return (
+                <Card key={r.id}>
+                  <CardContent className="p-4">
+                    <div className="flex items-center justify-between gap-3 flex-wrap">
+                      <div className="text-sm font-medium text-slate-700 dark:text-slate-200">配置行</div>
+                      <div className="flex gap-2">
+                        <Button onClick={()=>clone(r.id)}>⧉ 复制</Button>
+                        <Button onClick={()=>del(r.id)}>🗑️ 删除</Button>
+                      </div>
+                    </div>
+
+                    <div className="mt-3">
+                      <div className="text-xs font-medium text-slate-500">基础信息</div>
+                      <div className="mt-2 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                        <div>
+                          <div className="text-[11px] mb-1">decimals</div>
+                          <Input type="number" inputMode="numeric" value={r.decimals}
+                            onChange={e=>setRows(rs=>rs.map(x=>x.id===r.id?{...x,decimals:Math.max(0,Math.floor(parseNum(e.target.value)))}:x))}/>
+                          {(errors[r.id]||{}).decimals && <div className="text-[11px] text-red-600 mt-1">⚠️ {(errors[r.id]||{}).decimals}</div>}
+                        </div>
+                        <div>
+                          <div className="text-[11px] mb-1">market</div>
+                          <Input value={r.market} onChange={e=>setRows(rs=>rs.map(x=>x.id===r.id?{...x,market:e.target.value}:x))}/>
+                          {(errors[r.id]||{}).market && <div className="text-[11px] text-red-600 mt-1">⚠️ {(errors[r.id]||{}).market}</div>}
+                        </div>
+                        <div>
+                          <div className="text-[11px] mb-1">emodeGroup</div>
+                          <Input type="number" inputMode="numeric" value={r.emodeGroup}
+                            onChange={e=>setRows(rs=>rs.map(x=>x.id===r.id?{...x,emodeGroup:Math.max(0,Math.floor(parseNum(e.target.value)))}:x))}/>
+                          {(errors[r.id]||{}).emodeGroup && <div className="text-[11px] text-red-600 mt-1">⚠️ {(errors[r.id]||{}).emodeGroup}</div>}
+                        </div>
+                        <div className="lg:col-span-1 sm:col-span-2">
+                          <div className="text-[11px] mb-1">address</div>
+                          <Input value={r.address} onChange={e=>setRows(rs=>rs.map(x=>x.id===r.id?{...x,address:e.target.value.trim()}:x))} placeholder="0x... 或 0x2::sui::SUI"/>
+                          {(errors[r.id]||{}).address && <div className="text-[11px] text-red-600 mt-1">⚠️ {(errors[r.id]||{}).address}</div>}
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="mt-4">
+                      <div className="text-xs font-medium text-slate-500">额度</div>
+                      <div className="mt-2 grid grid-cols-1 md:grid-cols-3 gap-3">
+                        <div>
+                          <div className="text-[11px] mb-1">tokenMaxBorrow</div>
+                          <Input value={r.tokenMaxBorrow} onChange={e=>setRows(rs=>rs.map(x=>x.id===r.id?{...x,tokenMaxBorrow:e.target.value}:x))} placeholder="100"/>
+                          <div className="text-[11px] text-slate-500 mt-1 break-all">→ base: {a.value ?? '-'}{a.pretty && ` (${a.pretty})`}</div>
+                          {(errors[r.id]||{}).tokenMaxBorrow && <div className="text-[11px] text-red-600 mt-1">⚠️ {(errors[r.id]||{}).tokenMaxBorrow}</div>}
+                        </div>
+                        <div>
+                          <div className="text-[11px] mb-1">tokenBorrowOut</div>
+                          <Input value={r.tokenBorrowOut} onChange={e=>setRows(rs=>rs.map(x=>x.id===r.id?{...x,tokenBorrowOut:e.target.value}:x))} placeholder="50"/>
+                          <div className="text-[11px] text-slate-500 mt-1 break-all">→ base: {b.value ?? '-'}{b.pretty && ` (${b.pretty})`}</div>
+                          {(errors[r.id]||{}).tokenBorrowOut && <div className="text-[11px] text-red-600 mt-1">⚠️ {(errors[r.id]||{}).tokenBorrowOut}</div>}
+                        </div>
+                        <div>
+                          <div className="text-[11px] mb-1">tokenDepositOut</div>
+                          <Input value={r.tokenDepositOut} onChange={e=>setRows(rs=>rs.map(x=>x.id===r.id?{...x,tokenDepositOut:e.target.value}:x))} placeholder="20"/>
+                          <div className="text-[11px] text-slate-500 mt-1 break-all">→ base: {c.value ?? '-'}{c.pretty && ` (${c.pretty})`}</div>
+                          {(errors[r.id]||{}).tokenDepositOut && <div className="text-[11px] text-red-600 mt-1">⚠️ {(errors[r.id]||{}).tokenDepositOut}</div>}
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="mt-4">
+                      <div className="text-xs font-medium text-slate-500">费率与风控</div>
+                      <div className="mt-2 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                        <div>
+                          <div className="text-[11px] mb-1">flashLoanFeeRate</div>
+                          <Input type="number" inputMode="decimal" step={0.0005} value={r.flashLoanFeeRate}
+                            onChange={e=>setRows(rs=>rs.map(x=>x.id===r.id?{...x,flashLoanFeeRate:clamp01(parseNum(e.target.value))}:x))}/>
+                          {(errors[r.id]||{}).flashLoanFeeRate && <div className="text-[11px] text-red-600 mt-1">⚠️ {(errors[r.id]||{}).flashLoanFeeRate}</div>}
+                        </div>
+                        <div>
+                          <div className="text-[11px] mb-1">collateralFactor</div>
+                          <Input type="number" inputMode="decimal" step={0.001} value={r.collateralFactor}
+                            onChange={e=>setRows(rs=>rs.map(x=>x.id===r.id?{...x,collateralFactor:clamp01(parseNum(e.target.value))}:x))}/>
+                          {(errors[r.id]||{}).collateralFactor && <div className="text-[11px] text-red-600 mt-1">⚠️ {(errors[r.id]||{}).collateralFactor}</div>}
+                        </div>
+                        <div>
+                          <div className="text-[11px] mb-1">liquidationThreshold</div>
+                          <Input type="number" inputMode="decimal" step={0.001} value={r.liquidationThreshold}
+                            onChange={e=>setRows(rs=>rs.map(x=>x.id===r.id?{...x,liquidationThreshold:clamp01(parseNum(e.target.value))}:x))}/>
+                          {(errors[r.id]||{}).liquidationThreshold && <div className="text-[11px] text-red-600 mt-1">⚠️ {(errors[r.id]||{}).liquidationThreshold}</div>}
+                        </div>
+                        <div>
+                          <div className="text-[11px] mb-1">liquidationIncentive</div>
+                          <Input type="number" inputMode="decimal" step={0.001} value={r.liquidationIncentive}
+                            onChange={e=>setRows(rs=>rs.map(x=>x.id===r.id?{...x,liquidationIncentive:parseNum(e.target.value)}:x))}/>
+                          {(errors[r.id]||{}).liquidationIncentive && <div className="text-[11px] text-red-600 mt-1">⚠️ {(errors[r.id]||{}).liquidationIncentive}</div>}
+                        </div>
+                        <div className="sm:col-span-2 lg:col-span-1">
+                          <div className="text-[11px] mb-1">borrowWeight</div>
+                          <Input type="number" inputMode="decimal" step={0.01} value={r.borrowWeight}
+                            onChange={e=>setRows(rs=>rs.map(x=>x.id===r.id?{...x,borrowWeight:parseNum(e.target.value)}:x))}/>
+                        </div>
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
+              );
+            })}
+          </div>
+
+          <div className="mt-6">
+            <Card>
+              <CardContent className="p-6">
+                <div className="flex items-center justify-between">
+                  <div className="text-base font-medium">TXT 预览（导出不包含 decimals）</div>
+                  <div className="flex gap-2">
+                    <Button onClick={copyTxt}>{copied?"✅ 已复制":"📋 复制"}</Button>
+                    <Button onClick={downloadTxt}>⬇️ 下载 .txt</Button>
+                  </div>
+                </div>
+                <pre className="mt-3 text-xs bg-slate-100 dark:bg-slate-800 p-3 rounded-xl overflow-auto max-h-[360px] whitespace-pre">{contentTxt}</pre>
+              </CardContent>
+            </Card>
+
+            <Card className="mt-4">
+              <CardContent className="p-4 text-xs">
+                <div className="font-medium mb-2">内置测试</div>
+                <ul className="list-disc pl-5 space-y-1">
+                  <li>6dp: "10" → {decimalToBaseUnits("10", 6).value} （应为 10000000）</li>
+                  <li>6dp: "0.000001" → {decimalToBaseUnits("0.000001", 6).value} （应为 1）</li>
+                  <li>18dp: "1" → {decimalToBaseUnits("1", 18).value} （应为 1000000000000000000）</li>
+                </ul>
+              </CardContent>
+            </Card>
+          </div>
+        </div>
+      );
+    }
+
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(<App />);
+  </script>
+</body>
+</html>
